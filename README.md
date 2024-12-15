@@ -51,12 +51,12 @@ This comprehensive dataset provides a foundation for studying trends in musical 
 ---
 
 ## University Project
-This analysis was prepared as the final project for the course **"Komplex adatelemzési eljárások – Adatelemzés R-programnyelven"** in the Psychology Master’s program at **Eötvös Loránd University (ELTE)**.
+This analysis was prepared as the final project for the course **"Complex Data Analysis Procedures – Data Analysis with the R Programming Language"** in the Psychology Master’s program at **Eötvös Loránd University (ELTE)**.
 
 ---
 
 ## Files
-- **`analysis.R`**: The R script containing the data analysis and model comparisons.
-- **`analysis.html`**: The HTML version of the analysis report for easy review.
+- **`Factors_Influencing_AlbumRankings.Rmd`**: The R script containing the data analysis and model comparisons.
+- **`Factors_Influencing_AlbumRankings.html`**: The HTML version of the analysis report for easy review.
 
 ---
