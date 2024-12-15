@@ -1,0 +1,674 @@
+---
+title: "Factors Influencing Album Rankings in the 2020 Rolling Stone 500 List"
+author: "Eva Kovaliczky"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Research Question
+
+The research question guiding this analysis is: **What factors determine an album's ranking in the 2020 Rolling Stone 500 list?** Specifically, this study seeks to understand how various attributes of an album, including its release year, popularity, and the characteristics of the artist, contribute to its position on the list.
+
+To explore this, I will compare two linear regression models. The simple model focuses on album-level characteristics, while the complex model incorporates both album-level and artist-level features. This comparison will help determine whether including artist characteristics leads to a more accurate or insightful understanding of an album's ranking on the Rolling Stone 500 list.
+
+## Models
+
+**Model 1 (Simple Model):** This model examines the relationship between an album's rank in 2020 and several key attributes: release year, peak Billboard position, and Spotify popularity. These variables are focused on quantifiable characteristics of the album itself, without considering the artist’s specific details.
+
+**Model 2 (Complex Model):** This model expands on the simple model by including additional variables that account for artist-specific characteristics, such as the artist's gender, the number of members in the artist's group, and the average birth year of the artist. This model aims to explore whether the artist’s demographic and group dynamics have an influence on the album's success and ranking.
+
+# Database
+
+The dataset used for this analysis is the **Rolling Stone Album Rankings**, a curated dataset featured in TidyTuesday. This dataset compares the Rolling Stone’s “500 Greatest Albums of All Time” rankings from 2003, 2012, and 2020.
+
+This comprehensive dataset allows for an analysis of the factors that influence an album's ranking, incorporating both album-level features (e.g., Billboard position, and Spotify popularity) and artist-level features (e.g., gender and group size). Its rich structure provides a foundation for studying trends in musical preferences and the attributes of albums and artists celebrated at different times.
+
+# Solution
+
+## Setup and Libraries
+
+Set global options for R Markdown code chunks.
+
+```{r setup, include=TRUE}
+# The "include = TURE" setting shows this setup code in the output
+# The "echo = TRUE" ensures that subsequent R code chunks are displayed in the final document
+knitr::opts_chunk$set(echo = TRUE) 
+```
+
+Import libraries for data manipulation, visualization, and analysis
+
+```{r}
+library(dplyr)      # For data manipulation
+library(ggplot2)    # For data visualization
+library(skimr)      # For summarizing data
+library(corrplot)   # For visualizing correlation matrices
+library(tidyr)      # For tidying data
+library(missForest) # For imputing missing values
+library(tidyverse)  # A collection of packages for data science
+library(car)        # For regression diagnostics and linear models
+library(lmtest)     # For hypothesis testing in linear models
+library(lm.beta)    # For standardized regression coefficients
+library(stargazer)  # For producing well-formatted regression tables
+```
+
+## Read and Prepare the Dataset
+
+In this section, I load the dataset and prepare it for analysis by filtering and selecting only the variables relevant to the research question.
+
+### Load the Dataset
+
+The dataset used in this assignment is fetched directly from the TidyTuesday GitHub repository.
+
+```{r}
+# Read the dataset from the online source
+rolling_stone_full <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-05-07/rolling_stone.csv')
+
+```
+
+### Filter the Data
+
+For the purposes of this analysis, only albums ranked in the 2020 Rolling Stone list are considered. Albums without a rank in 2020 (rank_2020 is NA) are excluded. This ensures the analysis aligns with the research question: What determines an album's ranking in 2020?
+
+```{r}
+# Remove entries with missing rank_2020 values
+rolling_stone <- rolling_stone_full %>%
+  filter(!is.na(rank_2020))
+```
+
+### Select Relevant Variables
+
+To focus on the research question, I reduce the dataset to only the variables needed for the analysis. Additionally, I compute a new variable: the average birth year of the artists (artist_birth_year_avg), which is derived by dividing the sum of birth years by the number of members in the group.
+
+```{r}
+# Create a refined dataset with relevant variables
+rolling_stone <- rolling_stone %>%
+  mutate(artist_birth_year_avg = artist_birth_year_sum / artist_member_count) %>% # Compute the average artist birth year
+  select(sort_name, clean_name, album, rank_2020, 
+         release_year, peak_billboard_position, spotify_popularity, 
+         artist_member_count, artist_gender, artist_birth_year_avg)
+  
+```
+
+## Data Diagnostics
+
+This section explores the dataset to ensure it is clean and suitable for analysis. I perform descriptive analysis, identify missing data, and inspect anomalies.
+
+### Preview the Dataset
+
+To understand the structure of the dataset and the nature of the variables, I begin by previewing the first few rows. This provides an initial sense of the data I am working with.
+
+```{r}
+# Display the first few rows of the dataset
+head(rolling_stone)
+```
+
+### Check the Data Structure
+
+The str() function provides an overview of the dataset, including variable types (e.g., numeric, character) and the presence of missing values. This is crucial for understanding how the variables are stored and processed.
+
+```{r}
+# Display the structure of the dataset, including variable types
+str(rolling_stone)
+```
+
+### Summary Statistics
+
+Summary statistics offer a quick overview of each variable, including measures like minimum, maximum, mean, and quartiles for numeric variables, and frequency counts for categorical variables.
+
+```{r}
+# Generate descriptive statistics for all variables
+summary(rolling_stone)
+```
+
+### Overall Missing Data Check
+
+Missing data can impact the results of the analysis. Here, I calculate the number of missing values for each variable.
+
+```{r}
+# Check for missing data
+colSums(is.na(rolling_stone)) 
+```
+
+#### Inspect Missing Artist-Level Information
+
+To further investigate missing values, I focus on artist-level information. Specifically, I identify rows where artist-related variables (artist_gender, artist_member_count, artist_birth_year_avg) are missing. This helps me understand whether the missingness is random or linked to specific types of albums or artists.
+
+```{r}
+# Identify rows with missing artist-level information
+missing_artist_info <- rolling_stone %>%
+  filter(is.na(artist_member_count))
+
+# Display relevant columns to analyze why artist-level information is missing
+missing_artist_info %>%
+  select(sort_name, clean_name, artist_gender, artist_member_count, artist_birth_year_avg)
+```
+
+**Conclusion**: The investigation revealed that there are two missing values for the variables artist_gender, artist_member_count, and artist_birth_year_avg. Both missing entries correspond to "Various Artists," indicating that these artist-level details are not available for compilation albums or albums by multiple artists.
+
+### Distribution of Numeric Variables
+
+#### Visualize the Distribution of Numeric Variables
+
+To explore the distribution of numeric variables in the dataset, I plot histograms for each numeric column. This helps identify patterns, outliers, and the overall distribution of these variables.
+
+```{r}
+# Select numeric columns
+numeric_columns <- rolling_stone %>%
+  select(where(is.numeric))
+
+# Loop through numeric columns and plot histograms
+for (col_name in colnames(numeric_columns)) {
+  # Generate histogram for the current column
+  plot <- ggplot(numeric_columns, aes_string(x = col_name)) +
+    geom_histogram(bins = 30, fill = 'blue', color = 'black') +
+    labs(title = paste("Histogram of", col_name), x = col_name, y = "Count") +
+    theme_minimal()
+  
+  # Print the plot
+  print(plot)
+}
+```
+
+#### Boxplots for Numeric Variables
+
+Boxplots are used to identify potential outliers and understand the spread of numerical variables. This section demonstrates how to create boxplots for all numeric variables in the dataset using a loop, similar to the histogram approach.
+
+```{r}
+# Select numeric columns
+numeric_columns <- rolling_stone %>%
+  select(where(is.numeric))
+
+# Loop through numeric columns and plot boxplots
+for (col_name in colnames(numeric_columns)) {
+  # Generate boxplot for the current column
+  plot <- ggplot(rolling_stone, aes(x = factor(0), y = .data[[col_name]])) +
+    geom_boxplot() +
+    ylab(col_name) +
+    ggtitle(paste("Boxplot of", col_name)) +
+    theme_minimal()
+  
+  # Print the plot
+  print(plot)
+}
+```
+
+#### Correlation Analysis of Numerical Variables
+
+This section analyzes the relationships between numerical variables in the dataset using a correlation matrix and visualizes these relationships with a correlation plot. Correlation analysis is useful for identifying linear associations between variables and potential multicollinearity issues in predictive models.
+
+```{r}
+# Calculate correlation matrix for numerical variables
+cor_matrix <- cor(rolling_stone %>% select(where(is.numeric)), use = "complete.obs")
+# Plot correlation matrix
+corrplot(cor_matrix, method = "circle")
+```
+
+### Distribution of Categorical Variables: Artist Gender Distribution
+
+This section examines the distribution of artist gender categorical variable in the dataset. Understanding these distributions helps to identify the prevalence of specific categories and evaluate their relevance to the research questions.
+
+```{r}
+# Check distribution of categorical variables: Artist Gender
+table(rolling_stone$artist_gender)
+
+```
+
+## Data Diagnostics Decisions and Corrections
+
+Based on the diagnostic analysis, the following decisions were made to handle missing data and improve the quality of the dataset for regression modeling:
+
+**Remove Rows with Missing Artist-Level Information:** Two rows, where artist-level information (e.g., gender, birth year) is entirely missing, are removed. These rows are labeled "Various Artists," and their lack of detailed information makes them unsuitable for the research question: What factors determine an album’s ranking in the 2020 Rolling Stone 500 list? Since the complex model will incorporate artist-level features, these rows are deemed irrelevant.
+
+**Impute Missing Values in the spotify_popularity Column:** The spotify_popularity column had 22 missing values (\~4.4%). These were imputed using the missForest algorithm, which effectively handles data by iteratively imputing missing values using random forests. Imputation was preferred over row removal to preserve the dataset's size and leverage relevant features (e.g., release_year and peak_billboard_position) for prediction..
+
+```{r}
+
+# Remove rows with missing artist-level information
+rolling_stone <- rolling_stone %>%
+  filter(!is.na(artist_gender)) # Removes rows where artist_gender is NA
+
+# Select relevant columns for imputing spotify_popularity
+spotify_data <- rolling_stone %>%
+  select(spotify_popularity,release_year,peak_billboard_position,artist_birth_year_avg) #These columns were chosen because they are correlated with spotify_popularity,helping to impute missing values accurately.
+
+# Impute missing values using the missForest algorithm
+imputed_data <- missForest(as.data.frame(spotify_data), maxiter = 10, ntree = 100)
+
+# Replace the original spotify_popularity column with the imputed values
+rolling_stone$spotify_popularity <- imputed_data$ximp$spotify_popularity
+
+# Check the summary of the imputed column
+summary(rolling_stone$spotify_popularity)
+
+```
+
+## Visualizing Data: Relationship Between Dependent and Independent Variables
+
+The goal of these plots is to explore the relationships between the dependent variable (rank_2020) and various independent variables before proceeding with the regression model.
+
+While it is true that linear regression evaluates all predictors together, these individual visualizations are still useful for initial diagnostics and understanding variable behavior. They can complement the modeling process by identifying features that are likely to contribute meaningfully to the model.
+
+### Relationship Between Album Release Year and 2020 Rank
+
+To evaluate whether older or newer albums tend to rank higher on the 2020 Rolling Stone list.
+
+```{r}
+
+ggplot(rolling_stone, aes(x = release_year, y = rank_2020)) +
+  geom_point(alpha = 0.6, color = "blue") + # Scatterplot for individual data points
+  geom_smooth(method = "lm", color = "red", se = FALSE) + # Adds linear regression trendline
+  labs(
+    title = "Relationship Between Release Year and 2020 Rank",
+    x = "Release Year",
+    y = "2020 Rank"
+  ) +
+  theme_minimal()+
+  scale_y_reverse() # Reverse the rank axis for better interpretation (lower rank = higher placement)
+
+```
+
+### Relationship Between Billboard Peak Position and 2020 Rank
+
+To examine if albums that achieved a better peak position on the Billboard chart tend to rank higher.
+
+```{r}
+ggplot(rolling_stone, aes(x = peak_billboard_position, y = rank_2020)) +
+  geom_point(alpha = 0.6, color = "blue") +  # Scatterplot for individual data points
+  geom_smooth(method = "lm", color = "red", se = FALSE) +  # Linear regression trendline
+  labs(
+    title = "Relationship Between Billboard Peak Position and 2020 Rank",
+    x = "Peak Billboard Position",
+    y = "2020 Rank"
+  ) +
+  theme_minimal() +
+  scale_x_reverse() +  # Reverse Billboard peak position for better interpretation (lower = better position)
+  scale_y_reverse()
+
+```
+
+### Relationship Between Spotify Popularity and 2020 Rank
+
+To assess whether higher Spotify popularity correlates with better album ranking.
+
+```{r}
+ggplot(rolling_stone, aes(x = spotify_popularity, y = rank_2020)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Relationship Between Spotify Popularity and 2020 Rank",
+    x = "Spotify Popularity",
+    y = "2020 Rank"
+  ) +
+  theme_minimal() +
+  scale_y_reverse()
+
+```
+
+### Relationship Between Artist Gender and 2020 Rank
+
+To explore whether artist gender influences the album's ranking
+
+```{r}
+
+ggplot(rolling_stone, aes(x = factor(artist_gender, levels = c("Female", "Male", "Male/Female")), y = rank_2020, fill = artist_gender)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(
+    title = "Relationship Between Artist Gender and 2020 Rank",
+    x = "Artist Gender",
+    y = "2020 Rank"
+  ) +
+  scale_fill_discrete(name = "Artist Gender") +
+  theme_minimal() +
+  scale_y_reverse()
+
+```
+
+### Relationship Between Artist Member Count and 2020 Rank
+
+To see if the number of members in an artist group affects album ranking.
+
+```{r}
+ggplot(rolling_stone, aes(x = artist_member_count, y = rank_2020)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Relationship Between Artist Member Count and 2020 Rank",
+    x = "Artist Member Count",
+    y = "2020 Rank"
+  ) +
+  theme_minimal() +
+  scale_y_reverse()
+
+```
+
+### Relationship Between Artist Birth Year and 2020 Rank
+
+To determine if the average birth year of an artist (or group average) impacts album ranking.
+
+```{r}
+ggplot(rolling_stone, aes(x = artist_birth_year_avg, y = rank_2020)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(
+    title = "Relationship Between Artist Birth Year and 2020 Rank",
+    x = "Average Artist Birth Year",
+    y = "2020 Rank"
+  ) +
+  theme_minimal() +
+  scale_y_reverse()
+
+```
+
+## Model diagnostics
+
+### Simple Model Diagnostics
+
+This section focuses on creating and analyzing a simple linear regression model to examine the relationships between the dependent variable (rank_2020) and the independent variables (release_year, type, peak_billboard_position, and spotify_popularity).
+
+#### Model Creation
+
+This creates a simple linear regression model (model_simple) that predicts the 2020 ranking of albums (rank_2020) using
+
+-   release_year: The year the album was released.
+
+-   peak_billboard_position: The highest Billboard position achieved by the album.
+
+-   spotify_popularity: The popularity of the album on Spotify.
+
+```{r}
+# Fit a simple linear regression model
+model_simple <- lm(rank_2020 ~ release_year + peak_billboard_position + spotify_popularity, data = rolling_stone)
+
+```
+
+#### Checking for Outliers
+
+Cook's distance identifies influential data points that might disproportionately affect the regression model.
+
+```{r}
+
+# Calculate Cook's distance for identifying influential data points
+cooks_dist_simple <- cooks.distance(model_simple)
+
+# Print the observations with Cook's distance > 1
+influential_simple <- which(cooks_dist_simple > 1)
+print(influential_simple)
+
+```
+
+**Conclusion:** There are no observations with a Cook's distance above 1, suggesting that no individual data point has a disproportionately large influence on the regression model.
+
+#### Checking Assumptions
+
+##### Normality assumption
+
+```{r}
+
+# Perform the Shapiro-Wilk test for normality of residuals
+shapiro.test(residuals(model_simple))
+
+# Generate a Q-Q plot to visually assess normality
+qqnorm(residuals(model_simple))
+qqline(residuals(model_simple), col = "red")
+
+```
+
+**Conclusion:** The Shapiro-Wilk normality test indicates that the residuals not follow a normal distribution (W = 0.97338, p-value \< 0.001), as the p-value is lower than the commonly used significance level of 0.05.
+
+##### Linearity assumption
+
+Examines whether the relationship between predictors and the response variable is linear. Ideally, residuals should scatter randomly around zero. Deviations from this pattern may indicate nonlinearity.
+
+```{r}
+
+# Create a residuals vs. fitted values plot
+plot(model_simple,1)
+
+```
+
+**Conclusion:** Based on the scatter plot of the given residuals vs. fitted values, the linearity condition is not perfectly met.
+
+##### Homoscedasticty assumption (homogeneity of variance)
+
+Breusch-Pagan Test evaluates whether residuals have constant variance (homoscedasticity).
+
+```{r}
+
+# Perform the Breusch-Pagan test for heteroscedasticity
+bptest(model_simple)
+
+```
+
+**Conclusion:** The results of the Breusch-Pagan test (BP = 1.9115, df = 3, p-value = 0.591) suggest that there is no significant evidence of heteroscedasticity in the model, indicating that the assumption of homoscedasticity holds.
+
+##### Multicollinearity assumption
+
+Detect multicollinearity (high correlation between predictors)
+
+```{r}
+
+# Check Variance Inflation Factors (VIF) for predictors
+vif(model_simple)
+
+```
+
+**Conclusion:** The VIF values indicate that predictors have no significant multicollinearity.
+
+#### Model Evaluation: Conclusion
+
+While the model shows no issues with multicollinearity or heteroscedasticity, the deviations from normality and linearity suggest that its predictive power and interpretability may be limited.
+
+### Complex Model Diagnostics
+
+This section focuses on creating and analyzing a complex linear regression model to examine the relationships between the dependent variable (rank_2020) and a broader set of independent variables, including both album-level and artist-level features.
+
+#### Model Creation
+
+This creates a complex linear regression model (model_complex) that predicts the 2020 ranking of albums (rank_2020) using
+
+-   release_year: The year the album was released.
+
+-   peak_billboard_position: The highest Billboard position achieved by the album.
+
+-   spotify_popularity: The popularity of the album on Spotify.
+
+-   artist_gender: The gender of the artist(s).
+
+-   artist_member_count: The number of members in the artist's group.
+
+-   artist_birth_year_avg: The average birth year of the artist(s).
+
+```{r}
+# Fit a complex linear regression model
+model_complex <- lm(rank_2020 ~ release_year + peak_billboard_position + spotify_popularity + artist_gender + artist_member_count + artist_birth_year_avg, data = rolling_stone)
+
+```
+
+#### Checking for Outliers
+
+Cook's distance identifies influential data points that might disproportionately affect the regression model.
+
+```{r}
+
+# Calculate Cook's distance for identifying influential data points
+cooks_dist_complex <- cooks.distance(model_complex)
+
+# Print the observations with Cook's distance > 1
+influential_complex <- which(cooks_dist_complex > 1)
+print(influential_complex)
+
+```
+
+**Conclusion:** There are no observations with a Cook's distance above 1, suggesting that no individual data point has a disproportionately large influence on the regression model.
+
+#### Checking Assumptions
+
+##### Normality assumption
+
+```{r}
+
+# Perform the Shapiro-Wilk test for normality of residuals
+shapiro.test(residuals(model_complex))
+
+# Generate a Q-Q plot to visually assess normality
+qqnorm(residuals(model_complex))
+qqline(residuals(model_complex), col = "red")
+
+```
+
+**Conclusion:** The Shapiro-Wilk normality test indicates that the residuals not follow a normal distribution (W = 0.97355, p-value \< 0.001), as the p-value is lower than the commonly used significance level of 0.05.
+
+##### Linearity assumption
+
+Examines whether the relationship between predictors and the response variable is linear. Ideally, residuals should scatter randomly around zero. Deviations from this pattern may indicate nonlinearity.
+
+```{r}
+
+# Create a residuals vs. fitted values plot
+plot(model_complex,1)
+
+```
+
+**Conclusion:** Based on the scatter plot of the given residuals vs. fitted values, the linearity condition is not perfectly met.
+
+##### Homoscedasticty assumption (homogeneity of variance)
+
+Breusch-Pagan Test evaluates whether residuals have constant variance (homoscedasticity).
+
+```{r}
+
+# Perform the Breusch-Pagan test for heteroscedasticity
+bptest(model_complex)
+
+```
+
+**Conclusion:** The results of the Breusch-Pagan test (BP = 3.5575, df = 7, p-value = 0.8291) suggest that there is no significant evidence of heteroscedasticity in the model, indicating that the assumption of homoscedasticity holds.
+
+##### Multicollinearity assumption
+
+Detect multicollinearity (high correlation between predictors)
+
+```{r}
+
+# Check Variance Inflation Factors (VIF) for predictors
+vif(model_complex)
+
+```
+
+**Conclusion:** The VIF values indicate that predictors have no significant multicollinearity.
+
+#### Model Evaluation: Conclusion
+
+While the model shows no issues with multicollinearity or heteroscedasticity, the deviations from normality and linearity suggest that its predictive power and interpretability may be limited.
+
+## Model comparison
+
+### Simple model
+
+The simple model was created to examine the relationship between the 2020 album ranking (rank_2020) and several key variables: release year, peak Billboard position, and Spotify popularity. The following results were obtained from the model:
+
+```{r}
+
+summary(model_simple)
+
+```
+
+**Conclusion:** The simple linear regression model explains a modest 10.77% of the variance in rank_2020 (Adjusted R-squared = 0.1077). The model as a whole is statistically significant (F(3,494) = 20.99, p \< 0.001). Among the predictors, release year (p \< 0.001), peak Billboard position (p \< 0.05), and Spotify popularity (p \< 0.001) are significant in predicting the album’s ranking in 2020.
+
+The regression equation for the simple model is:
+
+rank_2020 = −4007 + 2.205 \* release_year + 0.2888 \* peak_billboard_position − 2.328 \* spotify_popularity
+
+```{r}
+# Standardized Coefficients
+lm.beta(model_simple)
+```
+
+**Conclusion:** The results show that Spotify popularity and release year have a stronger influence on the ranking, while the Billboard position has a smaller, yet still significant impact. This indicates that album ranking is more dependent on the release year and Spotify popularity than on the Billboard position.
+
+### Complex model
+
+The complex model was created to explore the relationship between the 2020 album ranking (rank_2020) and various key variables: release year, peak Billboard position, Spotify popularity, artist gender, artist member count, and average artist birth year. The following results were obtained from the model:
+
+```{r}
+
+summary(model_complex)
+
+```
+
+**Conclusion:** The simple linear regression model explains a modest 10.3% of the variance in rank_2020 (Adjusted R-squared = 0.103). The model as a whole is statistically significant (F(7,490) = 9.195, p \< 0.001). Among the predictors, release year (p \< 0.05), peak Billboard position (p \< 0.05), and Spotify popularity (p \< 0.001) are significant in predicting the album’s ranking in 2020.
+
+While the album-level variables (release year, peak Billboard position, and Spotify popularity) significantly predict the ranking, the artist-level variables, including artist gender, artist gender ratio (Male/Female), artist member count, and artist birth year average, were not found to be statistically significant (p \> 0.05). Thus, the album's ranking in the Rolling Stone 500 list is more influenced by album-level characteristics than by artist-specific factors.
+
+The regression equation for the simple model is:
+
+rank_2020 = −4016 + 2.640 \* release_year + 0.2795 \* peak_billboard_position − 2.269 \* spotify_popularity − 10.53 \* artist_gender(Male) − 13.85 \* artist_gender(Male/Female) + 4.282 \* artist_member_count − 0.474 \* artist_birth_year_avg
+
+```{r}
+# Standardized Coefficients
+lm.beta(model_complex)
+```
+
+**Conclusion:** The release year and peak Billboard position are the most significant predictors of an album's ranking, while Spotify popularity has a notable inverse relationship. Other factors like artist gender and birth year have minimal impact on the ranking.
+
+### Compare the two models
+
+In this section, I compare two linear regression models: a simple model and a complex model, to evaluate how well they predict the album ranking in 2020 (rank_2020). Both models include similar predictors but differ in their complexity, with the complex model incorporating artist-level variables. The comparison is based on several metrics such as Adjusted R-squared, AIC, and the Likelihood Ratio Test (LRT).
+
+```{r}
+
+stargazer(model_simple, model_complex, type = "text", title = "Comparison of Models")
+
+```
+
+**Conclusion:** The simple model explains 10.8% of the variance (Adjusted R-squared = 0.108), while the complex model explains 10.3% of the variance (Adjusted R-squared = 0.103). Despite the complex model having more predictors, the Adjusted R-squared values are quite similar, indicating that adding more variables did not drastically improve the model's explanatory power.
+
+Both models are statistically significant, with significant F-statistics (p \< 0.001).
+
+The coefficients for key predictors (release year, peak Billboard position, and Spotify popularity) remain consistent across both models.
+
+```{r}
+# Calculate Adjusted R-squared for both models
+adj_r2_simple <- summary(model_simple)$adj.r.squared
+adj_r2_complex <- summary(model_complex)$adj.r.squared
+
+# Calculate AIC for both models
+aic_simple <- AIC(model_simple)
+aic_complex <- AIC(model_complex)
+
+# Create a comparison table
+comparison_table <- data.frame(
+  Metric = c("Adjusted R-squared", "AIC"),
+  Simple_Model = c(round(adj_r2_simple, 3), round(aic_simple, 2)),
+  Complex_Model = c(round(adj_r2_complex, 3), round(aic_complex, 2))
+)
+
+# Display comparison table
+print("Model Comparison Table:")
+print(comparison_table)
+```
+
+**Conclusion:** The simple model has a lower AIC (6313) compared to the complex model (6319). A lower AIC value suggests that the simple model fits the data better, considering both the model's explanatory power and its complexity. Therefore, the additional variables in the complex model do not significantly improve its fit relative to the simple model.
+
+```{r}
+# Perform Likelihood Ratio Test
+lrt <- anova(model_simple, model_complex)
+
+# Add Likelihood Ratio Test results to the table
+lrt_results <- data.frame(
+  Metric = c("F-statistic", "p-value"),
+  Value = c(round(lrt$`F`[2], 3), round(lrt$`Pr(>F)`[2], 5))
+)
+
+print("Likelihood Ratio Test Results:")
+print(lrt_results)
+```
+
+**Conclusion:** The Likelihood Ratio Test (LRT) indicates that there is no statistically significant improvement in model fit when moving from the simple model to the complex model. The F-statistic is small (0.42), and the p-value (0.79) is much greater than the common significance threshold (0.05). This suggests that the additional predictors in the complex model do not provide substantial improvement over the simple model.
+
+# Discussion
+
+The results of this analysis provide insights into the factors that influence an album's ranking on the Rolling Stone 500 list for 2020. The primary aim of this study was to compare two models—one simple and one complex—in order to assess how album-level characteristics and artist-level characteristics contribute to the album's rank.
+
+While the complex model offers a broader scope by including artist-level characteristics, the simple model, which focuses on album-specific factors, provides a more effective explanation of album rankings on the Rolling Stone 500 list. The lack of significance for artist-level variables in the complex model suggests that, in this context, album characteristics such as release year, peak Billboard position, and Spotify popularity are the primary drivers of album success and ranking. Further research may explore other factors not captured in this study to enhance our understanding of album rankings in cultural contexts.
